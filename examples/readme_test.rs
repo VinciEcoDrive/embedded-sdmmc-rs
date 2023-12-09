@@ -25,7 +25,6 @@ impl embedded_hal_async::spi::SpiBus<u8> for FakeSpi {
     async fn flush(&mut self) -> Result<(), Self::Error> {
         todo!()
     }
-    
 }
 
 struct FakeCs();
@@ -51,7 +50,7 @@ impl embedded_hal_async::delay::DelayNs for FakeDelayer {
 struct FakeTimesource();
 
 impl embedded_sdmmc::TimeSource for FakeTimesource {
-    fn get_timestamp(&self) -> embedded_sdmmc::Timestamp {
+    async fn get_timestamp(&self) -> embedded_sdmmc::Timestamp {
         embedded_sdmmc::Timestamp {
             year_since_1970: 0,
             zero_indexed_month: 0,

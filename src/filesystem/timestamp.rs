@@ -1,7 +1,7 @@
 /// Things that impl this can tell you the current time.
 pub trait TimeSource {
     /// Returns the current time
-    fn get_timestamp(&self) -> Timestamp;
+    async fn get_timestamp(&self) -> Timestamp;
 }
 
 /// Represents an instant in time, in the local time zone. TODO: Consider

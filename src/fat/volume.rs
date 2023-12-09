@@ -325,7 +325,7 @@ impl FatVolume {
                             let dir_entry = OnDiskDirEntry::new(&blocks[0][start..end]);
                             // 0x00 or 0xE5 represents a free entry
                             if !dir_entry.is_valid() {
-                                let ctime = time_source.get_timestamp();
+                                let ctime = time_source.get_timestamp().await;
                                 let entry = DirEntry::new(
                                     name,
                                     attributes,
@@ -392,7 +392,7 @@ impl FatVolume {
                             let dir_entry = OnDiskDirEntry::new(&blocks[0][start..end]);
                             // 0x00 or 0xE5 represents a free entry
                             if !dir_entry.is_valid() {
-                                let ctime = time_source.get_timestamp();
+                                let ctime = time_source.get_timestamp().await;
                                 let entry = DirEntry::new(
                                     name,
                                     attributes,

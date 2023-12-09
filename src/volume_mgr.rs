@@ -439,7 +439,7 @@ where
                 file.update_length(0);
                 match &self.open_volumes[volume_idx].volume_type {
                     VolumeType::Fat(fat) => {
-                        file.entry.mtime = self.time_source.get_timestamp();
+                        file.entry.mtime = self.time_source.get_timestamp().await;
                         let fat_type = fat.get_fat_type();
                         self.write_entry_to_disk(fat_type, &file.entry).await?;
                     }
@@ -787,7 +787,7 @@ where
             // Entry update deferred to file close, for performance.
         }
         self.open_files[file_idx].entry.attributes.set_archive(true);
-        self.open_files[file_idx].entry.mtime = self.time_source.get_timestamp();
+        self.open_files[file_idx].entry.mtime = self.time_source.get_timestamp().await;
         Ok(())
     }
 
@@ -1043,7 +1043,7 @@ mod tests {
     }
 
     impl TimeSource for Clock {
-        fn get_timestamp(&self) -> Timestamp {
+        async fn get_timestamp(&self) -> Timestamp {
             // TODO: Return actual time
             Timestamp {
                 year_since_1970: 0,

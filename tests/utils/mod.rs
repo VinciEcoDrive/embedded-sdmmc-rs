@@ -154,7 +154,7 @@ pub struct TestTimeSource {
 }
 
 impl embedded_sdmmc::TimeSource for TestTimeSource {
-    fn get_timestamp(&self) -> embedded_sdmmc::Timestamp {
+    async fn get_timestamp(&self) -> embedded_sdmmc::Timestamp {
         self.fixed.clone()
     }
 }

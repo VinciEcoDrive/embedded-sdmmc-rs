@@ -78,7 +78,7 @@ impl BlockDevice for LinuxBlockDevice {
 pub struct Clock;
 
 impl TimeSource for Clock {
-    fn get_timestamp(&self) -> Timestamp {
+    async fn get_timestamp(&self) -> Timestamp {
         use chrono::Datelike;
         let local: chrono::DateTime<chrono::Local> = chrono::Local::now();
         Timestamp {

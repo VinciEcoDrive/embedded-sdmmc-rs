@@ -36,7 +36,7 @@
 //! #   fn set_high(&mut self) -> Result<(), ()> { Ok(()) }
 //! # }
 //! # impl embedded_sdmmc::TimeSource for DummyTimeSource {
-//! #   fn get_timestamp(&self) -> embedded_sdmmc::Timestamp { embedded_sdmmc::Timestamp::from_fat(0, 0) }
+//! #   async fn get_timestamp(&self) -> embedded_sdmmc::Timestamp { embedded_sdmmc::Timestamp::from_fat(0, 0) }
 //! # }
 //! # impl embedded_hal_async::delay::DelayNs for DummyDelayer {
 //! #   fn delay_us(&mut self, us: u8) {}
