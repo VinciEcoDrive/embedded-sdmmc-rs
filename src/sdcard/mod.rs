@@ -32,7 +32,7 @@ pub struct SdCard<SPI, CS, DELAYER>
 where
     SPI: embedded_hal_async::spi::SpiBus<u8> + embedded_hal_async::spi::SpiBus<u8>,
     CS: embedded_hal::digital::OutputPin,
-    DELAYER: embedded_hal::delay::DelayNs,
+    DELAYER: embedded_hal_async::delay::DelayNs,
 {
     inner: RefCell<SdCardInner<SPI, CS, DELAYER>>,
 }
@@ -41,7 +41,7 @@ impl<SPI, CS, DELAYER> SdCard<SPI, CS, DELAYER>
 where
     SPI: embedded_hal_async::spi::SpiBus<u8> + embedded_hal_async::spi::SpiBus<u8>,
     CS: embedded_hal::digital::OutputPin,
-    DELAYER: embedded_hal::delay::DelayNs,
+    DELAYER: embedded_hal_async::delay::DelayNs,
 {
     /// Create a new SD/MMC Card driver using a raw SPI interface.
     ///
@@ -150,7 +150,7 @@ impl<SPI, CS, DELAYER> BlockDevice for SdCard<SPI, CS, DELAYER>
 where
     SPI: embedded_hal_async::spi::SpiBus<u8> + embedded_hal_async::spi::SpiBus<u8>,
     CS: embedded_hal::digital::OutputPin,
-    DELAYER: embedded_hal::delay::DelayNs,
+    DELAYER: embedded_hal_async::delay::DelayNs,
 {
     type Error = Error;
 
@@ -201,7 +201,7 @@ struct SdCardInner<SPI, CS, DELAYER>
 where
     SPI: embedded_hal_async::spi::SpiBus<u8> + embedded_hal_async::spi::SpiBus<u8>,
     CS: embedded_hal::digital::OutputPin,
-    DELAYER: embedded_hal::delay::DelayNs,
+    DELAYER: embedded_hal_async::delay::DelayNs,
 {
     spi: SPI,
     cs: CS,
@@ -210,11 +210,20 @@ where
     options: AcquireOpts,
 }
 
+macro_rules! with_chip_select {
+    ($self:ident, $func:expr) => {
+        $self.cs_low()?;
+        let result = $func;
+        $self.cs_high()?;
+        result
+    };
+}
+
 impl<SPI, CS, DELAYER> SdCardInner<SPI, CS, DELAYER>
 where
     SPI: embedded_hal_async::spi::SpiBus<u8> + embedded_hal_async::spi::SpiBus<u8>,
     CS: embedded_hal::digital::OutputPin,
-    DELAYER: embedded_hal::delay::DelayNs,
+    DELAYER: embedded_hal_async::delay::DelayNs,
 {
     /// Read one or more blocks, starting at the given block index.
     async fn read(&mut self, blocks: &mut [Block], start_block_idx: BlockIdx) -> Result<(), Error> {
@@ -223,19 +232,19 @@ where
             Some(CardType::SDHC) => start_block_idx.0,
             None => return Err(Error::CardNotFound),
         };
-        self.with_chip_select(async move |s| {
+        with_chip_select!(self, {
             if blocks.len() == 1 {
                 // Start a single-block read
-                s.card_command(CMD17, start_idx).await?;
-                s.read_data(&mut blocks[0].contents).await?;
+                self.card_command(CMD17, start_idx).await?;
+                self.read_data(&mut blocks[0].contents).await?;
             } else {
                 // Start a multi-block read
-                s.card_command(CMD18, start_idx).await?;
+                self.card_command(CMD18, start_idx).await?;
                 for block in blocks.iter_mut() {
-                    s.read_data(&mut block.contents).await?;
+                    self.read_data(&mut block.contents).await?;
                 }
                 // Stop the read
-                s.card_command(CMD12, 0).await?;
+                self.card_command(CMD12, 0).await?;
             }
             Ok(())
         })
@@ -248,35 +257,35 @@ where
             Some(CardType::SDHC) => start_block_idx.0,
             None => return Err(Error::CardNotFound),
         };
-        self.with_chip_select(async move |s| {
+        with_chip_select!(self, {
             if blocks.len() == 1 {
                 // Start a single-block write
-                s.card_command(CMD24, start_idx).await?;
-                s.write_data(DATA_START_BLOCK, &blocks[0].contents).await?;
-                s.wait_not_busy(Delay::new_write()).await?;
-                if s.card_command(CMD13, 0).await? != 0x00 {
+                self.card_command(CMD24, start_idx).await?;
+                self.write_data(DATA_START_BLOCK, &blocks[0].contents).await?;
+                self.wait_not_busy(Delay::new_write()).await?;
+                if self.card_command(CMD13, 0).await? != 0x00 {
                     return Err(Error::WriteError);
                 }
-                if s.read_byte().await? != 0x00 {
+                if self.read_byte().await? != 0x00 {
                     return Err(Error::WriteError);
                 }
             } else {
                 // > It is recommended using this command preceding CMD25, some of the cards will be faster for Multiple
                 // > Write Blocks operation. Note that the host should send ACMD23 just before WRITE command if the host
                 // > wants to use the pre-erased feature
-                s.card_acmd(ACMD23, blocks.len() as u32).await?;
+                self.card_acmd(ACMD23, blocks.len() as u32).await?;
                 // wait for card to be ready before sending the next command
-                s.wait_not_busy(Delay::new_write()).await?;
+                self.wait_not_busy(Delay::new_write()).await?;
 
                 // Start a multi-block write
-                s.card_command(CMD25, start_idx).await?;
+                self.card_command(CMD25, start_idx).await?;
                 for block in blocks.iter() {
-                    s.wait_not_busy(Delay::new_write()).await?;
-                    s.write_data(WRITE_MULTIPLE_TOKEN, &block.contents).await?;
+                    self.wait_not_busy(Delay::new_write()).await?;
+                    self.write_data(WRITE_MULTIPLE_TOKEN, &block.contents).await?;
                 }
                 // Stop the write
-                s.wait_not_busy(Delay::new_write()).await?;
-                s.write_byte(STOP_TRAN_TOKEN).await?;
+                self.wait_not_busy(Delay::new_write()).await?;
+                self.write_byte(STOP_TRAN_TOKEN).await?;
             }
             Ok(())
         })
@@ -284,8 +293,8 @@ where
 
     /// Determine how many blocks this device can hold.
     async fn num_blocks(&mut self) -> Result<BlockCount, Error> {
-        let num_blocks = self.with_chip_select(async move |s| {
-            let csd = s.read_csd().await?;
+        with_chip_select!(self, {
+            let csd = self.read_csd().await?;
             debug!("CSD: {:?}", csd);
             match csd {
                 Csd::V1(ref contents) => Ok(contents.card_capacity_blocks()),
@@ -297,8 +306,8 @@ where
 
     /// Return the usable size of this SD card in bytes.
     async fn num_bytes(&mut self) -> Result<u64, Error> {
-        self.with_chip_select(async move |s| {
-            let csd = s.read_csd().await?;
+        with_chip_select!(self, {
+            let csd = self.read_csd().await?;
             debug!("CSD: {:?}", csd);
             match csd {
                 Csd::V1(ref contents) => Ok(contents.card_capacity_bytes()),
@@ -309,8 +318,8 @@ where
 
     /// Can this card erase single blocks?
     pub async fn erase_single_block_enabled(&mut self) -> Result<bool, Error> {
-        self.with_chip_select(async move |s| {
-            let csd = s.read_csd().await?;
+        with_chip_select!(self, {
+            let csd = self.read_csd().await?;
             match csd {
                 Csd::V1(ref contents) => Ok(contents.erase_single_block_enabled()),
                 Csd::V2(ref contents) => Ok(contents.erase_single_block_enabled()),
@@ -511,6 +520,7 @@ where
 
     /// Perform a function that might error with the chipselect low.
     /// Always releases the chipselect, even if the function errors.
+    #[deprecated("Use with_chip_select!(self, {your async code...}) instead")]
     async fn with_chip_select<F, T>(&mut self, func: F) -> Result<T, Error>
     where
         F: FnOnce(&mut Self) -> dyn Future<Output = Result<T, Error>>,
@@ -754,7 +764,7 @@ impl Delay {
     /// `Ok(())`.
     async fn delay<T>(&mut self, delayer: &mut T, err: Error) -> Result<(), Error>
     where
-        T: embedded_hal::delay::DelayNs,
+        T: embedded_hal_async::delay::DelayNs,
     {
         if self.retries_left == 0 {
             Err(err)

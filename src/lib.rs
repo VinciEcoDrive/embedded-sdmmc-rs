@@ -38,7 +38,7 @@
 //! # impl embedded_sdmmc::TimeSource for DummyTimeSource {
 //! #   fn get_timestamp(&self) -> embedded_sdmmc::Timestamp { embedded_sdmmc::Timestamp::from_fat(0, 0) }
 //! # }
-//! # impl embedded_hal::delay::DelayNs for DummyDelayer {
+//! # impl embedded_hal_async::delay::DelayNs for DummyDelayer {
 //! #   fn delay_us(&mut self, us: u8) {}
 //! # }
 //! # impl std::fmt::Write for DummyUart { fn write_str(&mut self, s: &str) -> std::fmt::Result { Ok(()) } }
