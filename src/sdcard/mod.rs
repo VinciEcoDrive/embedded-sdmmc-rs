@@ -211,12 +211,12 @@ where
 }
 
 macro_rules! with_chip_select {
-    ($self:ident, $func:expr) => {
+    ($self:ident, $func:expr) => {{
         $self.cs_low()?;
         let result = $func;
         $self.cs_high()?;
         result
-    };
+    }};
 }
 
 impl<SPI, CS, DELAYER> SdCardInner<SPI, CS, DELAYER>
@@ -261,7 +261,8 @@ where
             if blocks.len() == 1 {
                 // Start a single-block write
                 self.card_command(CMD24, start_idx).await?;
-                self.write_data(DATA_START_BLOCK, &blocks[0].contents).await?;
+                self.write_data(DATA_START_BLOCK, &blocks[0].contents)
+                    .await?;
                 self.wait_not_busy(Delay::new_write()).await?;
                 if self.card_command(CMD13, 0).await? != 0x00 {
                     return Err(Error::WriteError);
@@ -281,7 +282,8 @@ where
                 self.card_command(CMD25, start_idx).await?;
                 for block in blocks.iter() {
                     self.wait_not_busy(Delay::new_write()).await?;
-                    self.write_data(WRITE_MULTIPLE_TOKEN, &block.contents).await?;
+                    self.write_data(WRITE_MULTIPLE_TOKEN, &block.contents)
+                        .await?;
                 }
                 // Stop the write
                 self.wait_not_busy(Delay::new_write()).await?;
@@ -293,15 +295,15 @@ where
 
     /// Determine how many blocks this device can hold.
     async fn num_blocks(&mut self) -> Result<BlockCount, Error> {
-        with_chip_select!(self, {
+        let num_blocks = with_chip_select!(self, {
             let csd = self.read_csd().await?;
             debug!("CSD: {:?}", csd);
             match csd {
                 Csd::V1(ref contents) => Ok(contents.card_capacity_blocks()),
                 Csd::V2(ref contents) => Ok(contents.card_capacity_blocks()),
             }
-        }).await?;
-        Ok(BlockCount(num_blocks))
+        });
+        Ok(BlockCount(num_blocks?))
     }
 
     /// Return the usable size of this SD card in bytes.
@@ -313,7 +315,7 @@ where
                 Csd::V1(ref contents) => Ok(contents.card_capacity_bytes()),
                 Csd::V2(ref contents) => Ok(contents.card_capacity_bytes()),
             }
-        }).await
+        })
     }
 
     /// Can this card erase single blocks?
@@ -324,7 +326,7 @@ where
                 Csd::V1(ref contents) => Ok(contents.erase_single_block_enabled()),
                 Csd::V2(ref contents) => Ok(contents.erase_single_block_enabled()),
             }
-        }).await
+        })
     }
 
     /// Read the 'card specific data' block.
@@ -361,7 +363,9 @@ where
             if s != 0xFF {
                 break s;
             }
-            delay.delay(&mut self.delayer, Error::TimeoutReadBuffer).await?;
+            delay
+                .delay(&mut self.delayer, Error::TimeoutReadBuffer)
+                .await?;
         };
         if status != DATA_START_BLOCK {
             return Err(Error::ReadError);
@@ -370,12 +374,12 @@ where
         for b in buffer.iter_mut() {
             *b = 0xFF;
         }
-        self.transfer_bytes(buffer).await?;
+        self.write_bytes(buffer).await?;
 
         // These two bytes are always sent. They are either a valid CRC, or
         // junk, depending on whether CRC mode was enabled.
         let mut crc_bytes = [0xFF; 2];
-        self.transfer_bytes(&mut crc_bytes).await?;
+        self.write_bytes(&mut crc_bytes).await?;
         if self.options.use_crc {
             let crc = u16::from_be_bytes(crc_bytes);
             let calc_crc = crc16(buffer);
@@ -431,105 +435,110 @@ where
     /// Initializes the card into a known state (or at least tries to).
     async fn acquire(&mut self) -> Result<(), Error> {
         debug!("acquiring card with opts: {:?}", self.options);
-        let f = async move |s: &mut Self| {
-            // Assume it hasn't worked
-            let mut card_type;
-            trace!("Reset card..");
-            // Supply minimum of 74 clock cycles without CS asserted.
-            s.cs_high()?;
-            s.write_bytes(&[0xFF; 10]).await?;
-            // Assert CS
-            s.cs_low()?;
-            // Enter SPI mode.
-            let mut delay = Delay::new(s.options.acquire_retries);
-            for _attempts in 1.. {
-                trace!("Enter SPI mode, attempt: {}..", _attempts);
-                match s.card_command(CMD0, 0).await {
-                    Err(Error::TimeoutCommand(0)) => {
-                        // Try again?
-                        warn!("Timed out, trying again..");
-                        // Try flushing the card as done here: https://github.com/greiman/SdFat/blob/master/src/SdCard/SdSpiCard.cpp#L170,
-                        // https://github.com/rust-embedded-community/embedded-sdmmc-rs/pull/65#issuecomment-1270709448
-                        for _ in 0..0xFF {
-                            s.write_byte(0xFF).await?;
-                        }
-                    }
-                    Err(e) => {
-                        return Err(e);
-                    }
-                    Ok(R1_IDLE_STATE) => {
-                        break;
-                    }
-                    Ok(_r) => {
-                        // Try again
-                        warn!("Got response: {:x}, trying again..", _r);
-                    }
-                }
-
-                delay.delay(&mut s.delayer, Error::CardNotFound).await?;
-            }
-            // Enable CRC
-            debug!("Enable CRC: {}", s.options.use_crc);
-            // "The SPI interface is initialized in the CRC OFF mode in default"
-            // -- SD Part 1 Physical Layer Specification v9.00, Section 7.2.2 Bus Transfer Protection
-            if s.options.use_crc && s.card_command(CMD59, 1).await? != R1_IDLE_STATE {
-                return Err(Error::CantEnableCRC);
-            }
-            // Check card version
-            let mut delay = Delay::new_command();
-            let arg = loop {
-                if s.card_command(CMD8, 0x1AA).await? == (R1_ILLEGAL_COMMAND | R1_IDLE_STATE) {
-                    card_type = CardType::SD1;
-                    break 0;
-                }
-                let mut buffer = [0xFF; 4];
-                s.transfer_bytes(&mut buffer).await?;
-                let status = buffer[3];
-                if status == 0xAA {
-                    card_type = CardType::SD2;
-                    break 0x4000_0000;
-                }
-                delay.delay(&mut s.delayer, Error::TimeoutCommand(CMD8)).await?;
-            };
-
-            let mut delay = Delay::new_command();
-            while s.card_acmd(ACMD41, arg).await? != R1_READY_STATE {
-                delay.delay(&mut s.delayer, Error::TimeoutACommand(ACMD41)).await?;
-            }
-
-            if card_type == CardType::SD2 {
-                if s.card_command(CMD58, 0).await? != 0 {
-                    return Err(Error::Cmd58Error);
-                }
-                let mut buffer = [0xFF; 4];
-                s.transfer_bytes(&mut buffer).await?;
-                if (buffer[0] & 0xC0) == 0xC0 {
-                    card_type = CardType::SDHC;
-                }
-                // Ignore the other three bytes
-            }
-            debug!("Card version: {:?}", card_type);
-            s.card_type = Some(card_type);
-            Ok(())
-        };
-        let result = f(self).await;
+        let result = self.acquire_inner().await;
         self.cs_high()?;
         let _ = self.read_byte().await;
         result
     }
 
+    async fn acquire_inner(&mut self) -> Result<(), Error> {
+        // Assume it hasn't worked
+        let mut card_type;
+        trace!("Reset card..");
+        // Supply minimum of 74 clock cycles without CS asserted.
+        self.cs_high()?;
+        self.write_bytes(&[0xFF; 10]).await?;
+        // Assert CS
+        self.cs_low()?;
+        // Enter SPI mode.
+        let mut delay = Delay::new(self.options.acquire_retries);
+        for _attempts in 1.. {
+            trace!("Enter SPI mode, attempt: {}..", _attempts);
+            match self.card_command(CMD0, 0).await {
+                Err(Error::TimeoutCommand(0)) => {
+                    // Try again?
+                    warn!("Timed out, trying again..");
+                    // Try flushing the card as done here: https://github.com/greiman/SdFat/blob/master/src/SdCard/SdSpiCard.cpp#L170,
+                    // https://github.com/rust-embedded-community/embedded-sdmmc-rs/pull/65#issuecomment-1270709448
+                    for _ in 0..0xFF {
+                        self.write_byte(0xFF).await?;
+                    }
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+                Ok(R1_IDLE_STATE) => {
+                    break;
+                }
+                Ok(_r) => {
+                    // Try again
+                    warn!("Got response: {:x}, trying again..", _r);
+                }
+            }
+
+            delay.delay(&mut self.delayer, Error::CardNotFound).await?;
+        }
+        // Enable CRC
+        debug!("Enable CRC: {}", self.options.use_crc);
+        // "The SPI interface is initialized in the CRC OFF mode in default"
+        // -- SD Part 1 Physical Layer Specification v9.00, Section 7.2.2 Bus Transfer Protection
+        if self.options.use_crc && self.card_command(CMD59, 1).await? != R1_IDLE_STATE {
+            return Err(Error::CantEnableCRC);
+        }
+        // Check card version
+        let mut delay = Delay::new_command();
+        let arg = loop {
+            if self.card_command(CMD8, 0x1AA).await? == (R1_ILLEGAL_COMMAND | R1_IDLE_STATE) {
+                card_type = CardType::SD1;
+                break 0;
+            }
+            let mut buffer = [0xFF; 4];
+            self.write_bytes(&mut buffer).await?;
+            let status = buffer[3];
+            if status == 0xAA {
+                card_type = CardType::SD2;
+                break 0x4000_0000;
+            }
+            delay
+                .delay(&mut self.delayer, Error::TimeoutCommand(CMD8))
+                .await?;
+        };
+
+        let mut delay = Delay::new_command();
+        while self.card_acmd(ACMD41, arg).await? != R1_READY_STATE {
+            delay
+                .delay(&mut self.delayer, Error::TimeoutACommand(ACMD41))
+                .await?;
+        }
+
+        if card_type == CardType::SD2 {
+            if self.card_command(CMD58, 0).await? != 0 {
+                return Err(Error::Cmd58Error);
+            }
+            let mut buffer = [0xFF; 4];
+            self.write_bytes(&mut buffer).await?;
+            if (buffer[0] & 0xC0) == 0xC0 {
+                card_type = CardType::SDHC;
+            }
+            // Ignore the other three bytes
+        }
+        debug!("Card version: {:?}", card_type);
+        self.card_type = Some(card_type);
+        Ok(())
+    }
+
     /// Perform a function that might error with the chipselect low.
     /// Always releases the chipselect, even if the function errors.
-    #[deprecated("Use with_chip_select!(self, {your async code...}) instead")]
-    async fn with_chip_select<F, T>(&mut self, func: F) -> Result<T, Error>
-    where
-        F: FnOnce(&mut Self) -> dyn Future<Output = Result<T, Error>>,
-    {
-        self.cs_low()?;
-        let result = func(self).await;
-        self.cs_high()?;
-        result
-    }
+    /// DEPRECATED: Use with_chip_select! instead.
+    // async fn with_chip_select<F, T>(&mut self, func: F) -> Result<T, Error>
+    // where
+    //     F: FnOnce(&mut Self) -> dyn Future<Output = Result<T, Error>>,
+    // {
+    //     self.cs_low()?;
+    //     let result = func(self).await;
+    //     self.cs_high()?;
+    //     result
+    // }
 
     /// Perform an application-specific command.
     async fn card_acmd(&mut self, command: u8, arg: u32) -> Result<u8, Error> {
@@ -566,13 +575,21 @@ where
             if (result & 0x80) == ERROR_OK {
                 return Ok(result);
             }
-            delay.delay(&mut self.delayer, Error::TimeoutCommand(command)).await?;
+            delay
+                .delay(&mut self.delayer, Error::TimeoutCommand(command))
+                .await?;
         }
     }
 
     /// Receive a byte from the SPI bus by clocking out an 0xFF byte.
     async fn read_byte(&mut self) -> Result<u8, Error> {
-        self.spi.read(&mut [0xFF]).await.map_err(|_e| Error::Transport)
+        let mut read = [0xFF];
+        self.spi
+            .read(&mut read)
+            .await
+            .map_err(|_e| Error::Transport)?;
+
+        Ok(read[0])
     }
 
     /// Send a byte over the SPI bus and ignore what comes back.
@@ -603,7 +620,7 @@ where
     /// Prefer to use write & read instead of this.
     // #[deprecated]
     // async fn transfer_bytes<const N: usize>(&mut self, in_out: &mut [u8; N]) -> Result<(), Error> {
-    //     let mut read = [0; N]; 
+    //     let mut read = [0; N];
     //     self.spi
     //         .transfer(&mut read, in_out)
     //         .await
@@ -620,7 +637,9 @@ where
             if s == 0xFF {
                 break;
             }
-            delay.delay(&mut self.delayer, Error::TimeoutWaitNotBusy).await?;
+            delay
+                .delay(&mut self.delayer, Error::TimeoutWaitNotBusy)
+                .await?;
         }
         Ok(())
     }

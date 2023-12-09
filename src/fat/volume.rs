@@ -189,8 +189,9 @@ impl FatVolume {
                 let fat_offset = cluster.0 * 2;
                 let this_fat_block_num = self.lba_start + self.fat_start.offset_bytes(fat_offset);
                 let this_fat_ent_offset = (fat_offset % Block::LEN_U32) as usize;
-                let block =
-                    fat_block_cache.read(block_device, this_fat_block_num, "next_cluster").await?;
+                let block = fat_block_cache
+                    .read(block_device, this_fat_block_num, "next_cluster")
+                    .await?;
                 let fat_entry =
                     LittleEndian::read_u16(&block[this_fat_ent_offset..=this_fat_ent_offset + 1]);
                 match fat_entry {
@@ -212,8 +213,9 @@ impl FatVolume {
                 let fat_offset = cluster.0 * 4;
                 let this_fat_block_num = self.lba_start + self.fat_start.offset_bytes(fat_offset);
                 let this_fat_ent_offset = (fat_offset % Block::LEN_U32) as usize;
-                let block =
-                    fat_block_cache.read(block_device, this_fat_block_num, "next_cluster").await?;
+                let block = fat_block_cache
+                    .read(block_device, this_fat_block_num, "next_cluster")
+                    .await?;
                 let fat_entry =
                     LittleEndian::read_u32(&block[this_fat_ent_offset..=this_fat_ent_offset + 3])
                         & 0x0FFF_FFFF;
@@ -344,20 +346,23 @@ impl FatVolume {
                     }
                     if cluster != ClusterId::ROOT_DIR {
                         let mut block_cache = BlockCache::empty();
-                        current_cluster =
-                            match self.next_cluster(block_device, cluster, &mut block_cache) {
-                                Ok(n) => {
-                                    first_dir_block_num = self.cluster_to_block(n);
-                                    Some(n)
-                                }
-                                Err(Error::EndOfFile) => {
-                                    let c =
-                                        self.alloc_cluster(block_device, Some(cluster), true).await?;
-                                    first_dir_block_num = self.cluster_to_block(c);
-                                    Some(c)
-                                }
-                                _ => None,
-                            };
+                        current_cluster = match self
+                            .next_cluster(block_device, cluster, &mut block_cache)
+                            .await
+                        {
+                            Ok(n) => {
+                                first_dir_block_num = self.cluster_to_block(n);
+                                Some(n)
+                            }
+                            Err(Error::EndOfFile) => {
+                                let c = self
+                                    .alloc_cluster(block_device, Some(cluster), true)
+                                    .await?;
+                                first_dir_block_num = self.cluster_to_block(c);
+                                Some(c)
+                            }
+                            _ => None,
+                        };
                     } else {
                         current_cluster = None;
                     }
@@ -407,19 +412,23 @@ impl FatVolume {
                         }
                     }
                     let mut block_cache = BlockCache::empty();
-                    current_cluster =
-                        match self.next_cluster(block_device, cluster, &mut block_cache) {
-                            Ok(n) => {
-                                first_dir_block_num = self.cluster_to_block(n);
-                                Some(n)
-                            }
-                            Err(Error::EndOfFile) => {
-                                let c = self.alloc_cluster(block_device, Some(cluster), true)?;
-                                first_dir_block_num = self.cluster_to_block(c);
-                                Some(c)
-                            }
-                            _ => None,
-                        };
+                    current_cluster = match self
+                        .next_cluster(block_device, cluster, &mut block_cache)
+                        .await
+                    {
+                        Ok(n) => {
+                            first_dir_block_num = self.cluster_to_block(n);
+                            Some(n)
+                        }
+                        Err(Error::EndOfFile) => {
+                            let c = self
+                                .alloc_cluster(block_device, Some(cluster), true)
+                                .await?;
+                            first_dir_block_num = self.cluster_to_block(c);
+                            Some(c)
+                        }
+                        _ => None,
+                    };
                 }
                 Err(Error::NotEnoughSpace)
             }
@@ -461,7 +470,9 @@ impl FatVolume {
                 let mut block_cache = BlockCache::empty();
                 while let Some(cluster) = current_cluster {
                     for block_idx in first_dir_block_num.range(dir_size) {
-                        let block = block_cache.read(block_device, block_idx, "read_dir").await?;
+                        let block = block_cache
+                            .read(block_device, block_idx, "read_dir")
+                            .await?;
                         for entry in 0..Block::LEN / OnDiskDirEntry::LEN {
                             let start = entry * OnDiskDirEntry::LEN;
                             let end = (entry + 1) * OnDiskDirEntry::LEN;
@@ -478,14 +489,16 @@ impl FatVolume {
                         }
                     }
                     if cluster != ClusterId::ROOT_DIR {
-                        current_cluster =
-                            match self.next_cluster(block_device, cluster, &mut block_cache).await {
-                                Ok(n) => {
-                                    first_dir_block_num = self.cluster_to_block(n);
-                                    Some(n)
-                                }
-                                _ => None,
-                            };
+                        current_cluster = match self
+                            .next_cluster(block_device, cluster, &mut block_cache)
+                            .await
+                        {
+                            Ok(n) => {
+                                first_dir_block_num = self.cluster_to_block(n);
+                                Some(n)
+                            }
+                            _ => None,
+                        };
                     } else {
                         current_cluster = None;
                     }
@@ -505,7 +518,8 @@ impl FatVolume {
                     let block_idx = self.cluster_to_block(cluster);
                     for block in block_idx.range(BlockCount(u32::from(self.blocks_per_cluster))) {
                         block_device
-                            .read(&mut blocks, block, "read_dir").await
+                            .read(&mut blocks, block, "read_dir")
+                            .await
                             .map_err(Error::DeviceError)?;
                         for entry in 0..Block::LEN / OnDiskDirEntry::LEN {
                             let start = entry * OnDiskDirEntry::LEN;
@@ -522,11 +536,13 @@ impl FatVolume {
                             }
                         }
                     }
-                    current_cluster =
-                        match self.next_cluster(block_device, cluster, &mut block_cache).await {
-                            Ok(n) => Some(n),
-                            _ => None,
-                        };
+                    current_cluster = match self
+                        .next_cluster(block_device, cluster, &mut block_cache)
+                        .await
+                    {
+                        Ok(n) => Some(n),
+                        _ => None,
+                    };
                 }
                 Ok(())
             }
@@ -566,25 +582,25 @@ impl FatVolume {
                 let mut block_cache = BlockCache::empty();
                 while let Some(cluster) = current_cluster {
                     for block in first_dir_block_num.range(dir_size) {
-                        match self.find_entry_in_block(
-                            block_device,
-                            FatType::Fat16,
-                            match_name,
-                            block,
-                        ).await {
+                        match self
+                            .find_entry_in_block(block_device, FatType::Fat16, match_name, block)
+                            .await
+                        {
                             Err(Error::FileNotFound) => continue,
                             x => return x,
                         }
                     }
                     if cluster != ClusterId::ROOT_DIR {
-                        current_cluster =
-                            match self.next_cluster(block_device, cluster, &mut block_cache).await {
-                                Ok(n) => {
-                                    first_dir_block_num = self.cluster_to_block(n);
-                                    Some(n)
-                                }
-                                _ => None,
-                            };
+                        current_cluster = match self
+                            .next_cluster(block_device, cluster, &mut block_cache)
+                            .await
+                        {
+                            Ok(n) => {
+                                first_dir_block_num = self.cluster_to_block(n);
+                                Some(n)
+                            }
+                            _ => None,
+                        };
                     } else {
                         current_cluster = None;
                     }
@@ -600,21 +616,21 @@ impl FatVolume {
                 while let Some(cluster) = current_cluster {
                     let block_idx = self.cluster_to_block(cluster);
                     for block in block_idx.range(BlockCount(u32::from(self.blocks_per_cluster))) {
-                        match self.find_entry_in_block(
-                            block_device,
-                            FatType::Fat32,
-                            match_name,
-                            block,
-                        ).await {
+                        match self
+                            .find_entry_in_block(block_device, FatType::Fat32, match_name, block)
+                            .await
+                        {
                             Err(Error::FileNotFound) => continue,
                             x => return x,
                         }
                     }
-                    current_cluster =
-                        match self.next_cluster(block_device, cluster, &mut block_cache).await {
-                            Ok(n) => Some(n),
-                            _ => None,
-                        }
+                    current_cluster = match self
+                        .next_cluster(block_device, cluster, &mut block_cache)
+                        .await
+                    {
+                        Ok(n) => Some(n),
+                        _ => None,
+                    }
                 }
                 Err(Error::FileNotFound)
             }
@@ -688,7 +704,10 @@ impl FatVolume {
                 while let Some(cluster) = current_cluster {
                     // Scan the cluster / root dir a block at a time
                     for block in first_dir_block_num.range(dir_size) {
-                        match self.delete_entry_in_block(block_device, match_name, block).await {
+                        match self
+                            .delete_entry_in_block(block_device, match_name, block)
+                            .await
+                        {
                             Err(Error::FileNotFound) => {
                                 // Carry on
                             }
@@ -702,14 +721,16 @@ impl FatVolume {
                     // if it's not the root dir, find the next cluster so we can keep looking
                     if cluster != ClusterId::ROOT_DIR {
                         let mut block_cache = BlockCache::empty();
-                        current_cluster =
-                            match self.next_cluster(block_device, cluster, &mut block_cache).await {
-                                Ok(n) => {
-                                    first_dir_block_num = self.cluster_to_block(n);
-                                    Some(n)
-                                }
-                                _ => None,
-                            };
+                        current_cluster = match self
+                            .next_cluster(block_device, cluster, &mut block_cache)
+                            .await
+                        {
+                            Ok(n) => {
+                                first_dir_block_num = self.cluster_to_block(n);
+                                Some(n)
+                            }
+                            _ => None,
+                        };
                     } else {
                         current_cluster = None;
                     }
@@ -728,7 +749,10 @@ impl FatVolume {
                     // Scan the cluster a block at a time
                     let block_idx = self.cluster_to_block(cluster);
                     for block in block_idx.range(BlockCount(u32::from(self.blocks_per_cluster))) {
-                        match self.delete_entry_in_block(block_device, match_name, block).await {
+                        match self
+                            .delete_entry_in_block(block_device, match_name, block)
+                            .await
+                        {
                             Err(Error::FileNotFound) => {
                                 // Carry on
                                 continue;
@@ -742,11 +766,13 @@ impl FatVolume {
                     }
                     // Find the next cluster
                     let mut block_cache = BlockCache::empty();
-                    current_cluster =
-                        match self.next_cluster(block_device, cluster, &mut block_cache).await {
-                            Ok(n) => Some(n),
-                            _ => None,
-                        }
+                    current_cluster = match self
+                        .next_cluster(block_device, cluster, &mut block_cache)
+                        .await
+                    {
+                        Ok(n) => Some(n),
+                        _ => None,
+                    }
                 }
                 // Ok, give up
             }
@@ -772,6 +798,7 @@ impl FatVolume {
         let mut blocks = [Block::new()];
         block_device
             .read(&mut blocks, block, "read_dir")
+            .await
             .map_err(Error::DeviceError)?;
         for entry in 0..Block::LEN / OnDiskDirEntry::LEN {
             let start = entry * OnDiskDirEntry::LEN;
@@ -895,24 +922,24 @@ impl FatVolume {
             start_cluster,
             end_cluster
         );
-        let new_cluster =
-            match self.find_next_free_cluster(block_device, start_cluster, end_cluster).await {
-                Ok(cluster) => cluster,
-                Err(_) if start_cluster.0 > RESERVED_ENTRIES => {
-                    debug!(
-                        "Retrying, finding next free between {:?}..={:?}",
-                        ClusterId(RESERVED_ENTRIES),
-                        end_cluster
-                    );
-                    self.find_next_free_cluster(
-                        block_device,
-                        ClusterId(RESERVED_ENTRIES),
-                        end_cluster,
-                    ).await?
-                }
-                Err(e) => return Err(e),
-            };
-        self.update_fat(block_device, new_cluster, ClusterId::END_OF_FILE).await?;
+        let new_cluster = match self
+            .find_next_free_cluster(block_device, start_cluster, end_cluster)
+            .await
+        {
+            Ok(cluster) => cluster,
+            Err(_) if start_cluster.0 > RESERVED_ENTRIES => {
+                debug!(
+                    "Retrying, finding next free between {:?}..={:?}",
+                    ClusterId(RESERVED_ENTRIES),
+                    end_cluster
+                );
+                self.find_next_free_cluster(block_device, ClusterId(RESERVED_ENTRIES), end_cluster)
+                    .await?
+            }
+            Err(e) => return Err(e),
+        };
+        self.update_fat(block_device, new_cluster, ClusterId::END_OF_FILE)
+            .await?;
         if let Some(cluster) = prev_cluster {
             trace!(
                 "Updating old cluster {:?} to {:?} in FAT",
@@ -926,21 +953,22 @@ impl FatVolume {
             new_cluster,
             end_cluster
         );
-        self.next_free_cluster =
-            match self.find_next_free_cluster(block_device, new_cluster, end_cluster).await {
-                Ok(cluster) => Some(cluster),
-                Err(_) if new_cluster.0 > RESERVED_ENTRIES => {
-                    match self.find_next_free_cluster(
-                        block_device,
-                        ClusterId(RESERVED_ENTRIES),
-                        end_cluster,
-                    ).await {
-                        Ok(cluster) => Some(cluster),
-                        Err(e) => return Err(e),
-                    }
+        self.next_free_cluster = match self
+            .find_next_free_cluster(block_device, new_cluster, end_cluster)
+            .await
+        {
+            Ok(cluster) => Some(cluster),
+            Err(_) if new_cluster.0 > RESERVED_ENTRIES => {
+                match self
+                    .find_next_free_cluster(block_device, ClusterId(RESERVED_ENTRIES), end_cluster)
+                    .await
+                {
+                    Ok(cluster) => Some(cluster),
+                    Err(e) => return Err(e),
                 }
-                Err(e) => return Err(e),
-            };
+            }
+            Err(e) => return Err(e),
+        };
         debug!("Next free cluster is {:?}", self.next_free_cluster);
         if let Some(ref mut number_free_cluster) = self.free_clusters_count {
             *number_free_cluster -= 1;
@@ -975,7 +1003,10 @@ impl FatVolume {
         }
         let mut next = {
             let mut block_cache = BlockCache::empty();
-            match self.next_cluster(block_device, cluster, &mut block_cache).await {
+            match self
+                .next_cluster(block_device, cluster, &mut block_cache)
+                .await
+            {
                 Ok(n) => n,
                 Err(Error::EndOfFile) => return Ok(()),
                 Err(e) => return Err(e),
@@ -988,16 +1019,22 @@ impl FatVolume {
         } else {
             self.next_free_cluster = Some(next);
         }
-        self.update_fat(block_device, cluster, ClusterId::END_OF_FILE).await?;
+        self.update_fat(block_device, cluster, ClusterId::END_OF_FILE)
+            .await?;
         loop {
             let mut block_cache = BlockCache::empty();
-            match self.next_cluster(block_device, next, &mut block_cache).await {
+            match self
+                .next_cluster(block_device, next, &mut block_cache)
+                .await
+            {
                 Ok(n) => {
-                    self.update_fat(block_device, next, ClusterId::EMPTY).await?;
+                    self.update_fat(block_device, next, ClusterId::EMPTY)
+                        .await?;
                     next = n;
                 }
                 Err(Error::EndOfFile) => {
-                    self.update_fat(block_device, next, ClusterId::EMPTY).await?;
+                    self.update_fat(block_device, next, ClusterId::EMPTY)
+                        .await?;
                     break;
                 }
                 Err(e) => return Err(e),
@@ -1023,7 +1060,8 @@ where
 {
     let mut blocks = [Block::new()];
     block_device
-        .read(&mut blocks, lba_start, "read_bpb").await
+        .read(&mut blocks, lba_start, "read_bpb")
+        .await
         .map_err(Error::DeviceError)?;
     let block = &blocks[0];
     let bpb = Bpb::create_from_bytes(block).map_err(Error::FormatError)?;

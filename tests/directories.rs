@@ -348,7 +348,7 @@ fn delete_file() {
         Err(embedded_sdmmc::Error::FileNotFound)
     ));
 
-    volume_mgr.close_file(file).unwrap();
+    volume_mgr.close_file(file).await.unwrap();
 
     volume_mgr
         .delete_file_in_dir(root_dir, "README.TXT")
