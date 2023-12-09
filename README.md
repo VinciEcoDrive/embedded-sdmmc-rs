@@ -1,3 +1,7 @@
+# (Temporary) Async port of the embedded-sdmmc crate using embedded-hal-async 1.0.0-rc.2
+
+
+
 # Embedded SD/MMC [![crates.io](https://img.shields.io/crates/v/embedded-sdmmc.svg)](https://crates.io/crates/embedded-sdmmc) [![Documentation](https://docs.rs/embedded-sdmmc/badge.svg)](https://docs.rs/embedded-sdmmc)
 
 This crate is intended to allow you to read/write files on a FAT formatted SD

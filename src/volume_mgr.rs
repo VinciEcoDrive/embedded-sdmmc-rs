@@ -114,7 +114,7 @@ where
     ///
     /// This function gives you a `RawVolume` and you must close the volume by
     /// calling `VolumeManager::close_volume`.
-    pub fn open_raw_volume(&mut self, volume_idx: VolumeIdx) -> Result<RawVolume, Error<D::Error>> {
+    pub async fn open_raw_volume(&mut self, volume_idx: VolumeIdx) -> Result<RawVolume, Error<D::Error>> {
         const PARTITION1_START: usize = 446;
         const PARTITION2_START: usize = PARTITION1_START + PARTITION_INFO_LENGTH;
         const PARTITION3_START: usize = PARTITION2_START + PARTITION_INFO_LENGTH;
@@ -140,7 +140,7 @@ where
         let (part_type, lba_start, num_blocks) = {
             let mut blocks = [Block::new()];
             self.block_device
-                .read(&mut blocks, BlockIdx(0), "read_mbr")
+                .read(&mut blocks, BlockIdx(0), "read_mbr").await
                 .map_err(Error::DeviceError)?;
             let block = &blocks[0];
             // We only support Master Boot Record (MBR) partitioned cards, not
@@ -186,7 +186,7 @@ where
             | PARTITION_ID_FAT32_LBA
             | PARTITION_ID_FAT16_LBA
             | PARTITION_ID_FAT16 => {
-                let volume = fat::parse_volume(&self.block_device, lba_start, num_blocks)?;
+                let volume = fat::parse_volume(&self.block_device, lba_start, num_blocks).await?;
                 let id = RawVolume(self.id_generator.get());
                 let info = VolumeInfo {
                     volume_id: id,
@@ -229,7 +229,7 @@ where
     /// Open a directory.
     ///
     /// You can then read the directory entries with `iterate_dir` and `open_file_in_dir`.
-    pub fn open_dir<N>(
+    pub async fn open_dir<N>(
         &mut self,
         parent_dir: RawDirectory,
         name: N,
@@ -250,7 +250,7 @@ where
         let parent_dir_info = &self.open_dirs[parent_dir_idx];
         let dir_entry = match &self.open_volumes[volume_idx].volume_type {
             VolumeType::Fat(fat) => {
-                fat.find_directory_entry(&self.block_device, parent_dir_info, &short_file_name)?
+                fat.find_directory_entry(&self.block_device, parent_dir_info, &short_file_name).await?
             }
         };
 
@@ -319,7 +319,7 @@ where
     }
 
     /// Look in a directory for a named file.
-    pub fn find_directory_entry<N>(
+    pub async fn find_directory_entry<N>(
         &mut self,
         directory: RawDirectory,
         name: N,
@@ -332,13 +332,13 @@ where
         match &self.open_volumes[volume_idx].volume_type {
             VolumeType::Fat(fat) => {
                 let sfn = name.to_short_filename().map_err(Error::FilenameError)?;
-                fat.find_directory_entry(&self.block_device, &self.open_dirs[directory_idx], &sfn)
+                fat.find_directory_entry(&self.block_device, &self.open_dirs[directory_idx], &sfn).await
             }
         }
     }
 
     /// Call a callback function for each directory entry in a directory.
-    pub fn iterate_dir<F>(
+    pub async fn iterate_dir<F>(
         &mut self,
         directory: RawDirectory,
         func: F,
@@ -350,7 +350,7 @@ where
         let volume_idx = self.get_volume_by_id(self.open_dirs[directory_idx].volume_id)?;
         match &self.open_volumes[volume_idx].volume_type {
             VolumeType::Fat(fat) => {
-                fat.iterate_dir(&self.block_device, &self.open_dirs[directory_idx], func)
+                fat.iterate_dir(&self.block_device, &self.open_dirs[directory_idx], func).await
             }
         }
     }
@@ -361,7 +361,7 @@ where
     ///
     /// The DirEntry must be a valid DirEntry read from disk, and not just
     /// random numbers.
-    unsafe fn open_dir_entry(
+    async unsafe fn open_dir_entry(
         &mut self,
         volume: RawVolume,
         dir_entry: DirEntry,
@@ -425,7 +425,7 @@ where
                 let volume_idx = self.get_volume_by_id(volume)?;
                 match &mut self.open_volumes[volume_idx].volume_type {
                     VolumeType::Fat(fat) => {
-                        fat.truncate_cluster_chain(&self.block_device, file.entry.cluster)?
+                        fat.truncate_cluster_chain(&self.block_device, file.entry.cluster).await?
                     }
                 };
                 file.update_length(0);
@@ -433,7 +433,7 @@ where
                     VolumeType::Fat(fat) => {
                         file.entry.mtime = self.time_source.get_timestamp();
                         let fat_type = fat.get_fat_type();
-                        self.write_entry_to_disk(fat_type, &file.entry)?;
+                        self.write_entry_to_disk(fat_type, &file.entry).await?;
                     }
                 };
 
@@ -451,7 +451,7 @@ where
     }
 
     /// Open a file with the given full path. A file can only be opened once.
-    pub fn open_file_in_dir<N>(
+    pub async fn open_file_in_dir<N>(
         &mut self,
         directory: RawDirectory,
         name: N,
@@ -474,7 +474,7 @@ where
 
         let dir_entry = match &volume_info.volume_type {
             VolumeType::Fat(fat) => {
-                fat.find_directory_entry(&self.block_device, directory_info, &sfn)
+                fat.find_directory_entry(&self.block_device, directory_info, &sfn).await
             }
         };
 
@@ -521,7 +521,7 @@ where
                         directory_info,
                         sfn,
                         att,
-                    )?,
+                    ).await?,
                 };
 
                 let file_id = RawFile(self.id_generator.get());
@@ -547,13 +547,13 @@ where
                 // Safe to unwrap, since we actually have an entry if we got here
                 let dir_entry = dir_entry.unwrap();
                 // Safety: We read this dir entry off disk and didn't change it
-                unsafe { self.open_dir_entry(volume_id, dir_entry, mode) }
+                unsafe { self.open_dir_entry(volume_id, dir_entry, mode).await }
             }
         }
     }
 
     /// Delete a closed file with the given filename, if it exists.
-    pub fn delete_file_in_dir<N>(
+    pub async fn delete_file_in_dir<N>(
         &mut self,
         directory: RawDirectory,
         name: N,
@@ -567,7 +567,7 @@ where
         let sfn = name.to_short_filename().map_err(Error::FilenameError)?;
 
         let dir_entry = match &self.open_volumes[volume_idx].volume_type {
-            VolumeType::Fat(fat) => fat.find_directory_entry(&self.block_device, dir_info, &sfn),
+            VolumeType::Fat(fat) => fat.find_directory_entry(&self.block_device, dir_info, &sfn).await,
         }?;
 
         if dir_entry.attributes.is_directory() {
@@ -581,7 +581,7 @@ where
         let volume_idx = self.get_volume_by_id(dir_info.volume_id)?;
         match &self.open_volumes[volume_idx].volume_type {
             VolumeType::Fat(fat) => {
-                fat.delete_directory_entry(&self.block_device, dir_info, &sfn)?
+                fat.delete_directory_entry(&self.block_device, dir_info, &sfn).await?
             }
         }
 
@@ -604,7 +604,7 @@ where
     }
 
     /// Read from an open file.
-    pub fn read(&mut self, file: RawFile, buffer: &mut [u8]) -> Result<usize, Error<D::Error>> {
+    pub async fn read(&mut self, file: RawFile, buffer: &mut [u8]) -> Result<usize, Error<D::Error>> {
         let file_idx = self.get_file_by_id(file)?;
         let volume_idx = self.get_volume_by_id(self.open_files[file_idx].volume_id)?;
         // Calculate which file block the current offset lies within
@@ -623,6 +623,7 @@ where
             let mut blocks = [Block::new()];
             self.block_device
                 .read(&mut blocks, block_idx, "read")
+                .await
                 .map_err(Error::DeviceError)?;
             let block = &blocks[0];
             let to_copy = block_avail
@@ -641,7 +642,7 @@ where
     }
 
     /// Write to a open file.
-    pub fn write(&mut self, file: RawFile, buffer: &[u8]) -> Result<(), Error<D::Error>> {
+    pub async fn write(&mut self, file: RawFile, buffer: &[u8]) -> Result<(), Error<D::Error>> {
         #[cfg(feature = "defmt-log")]
         debug!("write(file={:?}, buffer={:x}", file, buffer);
 
@@ -664,7 +665,7 @@ where
             self.open_files[file_idx].entry.cluster =
                 match self.open_volumes[volume_idx].volume_type {
                     VolumeType::Fat(ref mut fat) => {
-                        fat.alloc_cluster(&self.block_device, None, false)?
+                        fat.alloc_cluster(&self.block_device, None, false).await?
                     }
                 };
             debug!(
@@ -712,7 +713,7 @@ where
                                         &self.block_device,
                                         Some(current_cluster.1),
                                         false,
-                                    )
+                                    ).await
                                     .is_err()
                                 {
                                     return Err(Error::DiskFull);
@@ -723,7 +724,7 @@ where
                                         volume_idx,
                                         &mut current_cluster,
                                         self.open_files[file_idx].current_offset,
-                                    )
+                                    ).await
                                     .map_err(|_| Error::AllocationError)?;
                                 debug!("New offset {:?}", new_offset);
                                 new_offset
@@ -738,6 +739,7 @@ where
                 debug!("Partial block write");
                 self.block_device
                     .read(&mut blocks, block_idx, "read")
+                    .await
                     .map_err(Error::DeviceError)?;
             }
             let block = &mut blocks[0];
@@ -746,6 +748,7 @@ where
             debug!("Writing block {:?}", block_idx);
             self.block_device
                 .write(&blocks, block_idx)
+                .await
                 .map_err(Error::DeviceError)?;
             written += to_copy;
             self.open_files[file_idx].current_cluster = current_cluster;
@@ -767,7 +770,7 @@ where
     }
 
     /// Close a file with the given full path.
-    pub fn close_file(&mut self, file: RawFile) -> Result<(), Error<D::Error>> {
+    pub async fn close_file(&mut self, file: RawFile) -> Result<(), Error<D::Error>> {
         let mut found_idx = None;
         for (idx, info) in self.open_files.iter().enumerate() {
             if file == info.file_id {
@@ -783,14 +786,14 @@ where
             match self.open_volumes[volume_idx].volume_type {
                 VolumeType::Fat(ref mut fat) => {
                     debug!("Updating FAT info sector");
-                    fat.update_info_sector(&self.block_device)?;
+                    fat.update_info_sector(&self.block_device).await?;
                     debug!("Updating dir entry {:?}", file_info.entry);
                     if file_info.entry.size != 0 {
                         // If you have a length, you must have a cluster
                         assert!(file_info.entry.cluster.0 != 0);
                     }
                     let fat_type = fat.get_fat_type();
-                    self.write_entry_to_disk(fat_type, &file_info.entry)?;
+                    self.write_entry_to_disk(fat_type, &file_info.entry).await?;
                 }
             };
         }
@@ -896,7 +899,7 @@ where
     /// This function turns `desired_offset` into an appropriate block to be
     /// read. It either calculates this based on the start of the file, or
     /// from the last cluster we read - whichever is better.
-    fn find_data_on_disk(
+    async fn find_data_on_disk(
         &self,
         volume_idx: usize,
         start: &mut (u32, ClusterId),
@@ -912,7 +915,7 @@ where
         for _ in 0..num_clusters {
             start.1 = match &self.open_volumes[volume_idx].volume_type {
                 VolumeType::Fat(fat) => {
-                    fat.next_cluster(&self.block_device, start.1, &mut block_cache)?
+                    fat.next_cluster(&self.block_device, start.1, &mut block_cache).await?
                 }
             };
             start.0 += bytes_per_cluster;
@@ -930,7 +933,7 @@ where
     }
 
     /// Writes a Directory Entry to the disk
-    fn write_entry_to_disk(
+    async fn write_entry_to_disk(
         &self,
         fat_type: fat::FatType,
         entry: &DirEntry,
@@ -938,6 +941,7 @@ where
         let mut blocks = [Block::new()];
         self.block_device
             .read(&mut blocks, entry.entry_block, "read")
+            .await
             .map_err(Error::DeviceError)?;
         let block = &mut blocks[0];
 
@@ -946,6 +950,7 @@ where
 
         self.block_device
             .write(&blocks, entry.entry_block)
+            .await
             .map_err(Error::DeviceError)?;
         Ok(())
     }
@@ -1010,7 +1015,7 @@ mod tests {
         type Error = Error;
 
         /// Read one or more blocks, starting at the given block index.
-        fn read(
+        async fn read(
             &self,
             blocks: &mut [Block],
             start_block_idx: BlockIdx,
@@ -1208,22 +1213,22 @@ mod tests {
         }
 
         /// Write one or more blocks, starting at the given block index.
-        fn write(&self, _blocks: &[Block], _start_block_idx: BlockIdx) -> Result<(), Self::Error> {
+        async fn write(&self, _blocks: &[Block], _start_block_idx: BlockIdx) -> Result<(), Self::Error> {
             unimplemented!();
         }
 
         /// Determine how many blocks this device can hold.
-        fn num_blocks(&self) -> Result<BlockCount, Self::Error> {
+        async fn num_blocks(&self) -> Result<BlockCount, Self::Error> {
             Ok(BlockCount(2))
         }
     }
 
     #[test]
-    fn partition0() {
+    async fn partition0() {
         let mut c: VolumeManager<DummyBlockDevice, Clock, 2, 2> =
             VolumeManager::new_with_limits(DummyBlockDevice, Clock, 0xAA00_0000);
 
-        let v = c.open_raw_volume(VolumeIdx(0)).unwrap();
+        let v = c.open_raw_volume(VolumeIdx(0)).await.unwrap();
         let expected_id = RawVolume(SearchId(0xAA00_0000));
         assert_eq!(v, expected_id);
         assert_eq!(
