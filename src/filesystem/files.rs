@@ -49,6 +49,7 @@ where
 {
     raw_file: RawFile,
     volume_mgr: &'a mut VolumeManager<D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>,
+    closed: bool,
 }
 
 impl<'a, D, T, const MAX_DIRS: usize, const MAX_FILES: usize, const MAX_VOLUMES: usize>
@@ -65,6 +66,7 @@ where
         File {
             raw_file,
             volume_mgr,
+            closed: false,
         }
     }
 
@@ -123,6 +125,17 @@ where
         core::mem::forget(self);
         f
     }
+
+    /// Close the file
+    /// This is REQUIRED to be called before dropping the file, otherwise the
+    /// file will not be closed cleanly.
+    pub async fn close(mut self) -> Result<(), crate::Error<D::Error>> {
+        self.volume_mgr.close_file(self.raw_file).await?;
+        self.closed = true;
+        drop(self);
+
+        Ok(())
+    }
 }
 
 impl<'a, D, T, const MAX_DIRS: usize, const MAX_FILES: usize, const MAX_VOLUMES: usize> Drop
@@ -132,9 +145,9 @@ where
     T: crate::TimeSource,
 {
     fn drop(&mut self) {
-        self.volume_mgr
-            .on_file_dropped(self.raw_file)
-            .expect("Failed to close file");
+        if !self.closed {
+            panic!("File dropped without being closed");
+        }
     }
 }
 
