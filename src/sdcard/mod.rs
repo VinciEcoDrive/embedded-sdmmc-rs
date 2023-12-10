@@ -355,7 +355,7 @@ where
     /// Read an arbitrary number of bytes from the card using the SD Card
     /// protocol and an optional CRC. Always fills the given buffer, so make
     /// sure it's the right size.
-    async fn read_data(&mut self, buffer: &mut [u8]) -> Result<(), Error> {
+    async fn read_data<const N: usize>(&mut self, buffer: &mut [u8; N]) -> Result<(), Error> {
         // Get first non-FF byte.
         let mut delay = Delay::new_read();
         let status = loop {
@@ -374,12 +374,12 @@ where
         for b in buffer.iter_mut() {
             *b = 0xFF;
         }
-        self.write_bytes(buffer).await?;
+        self.transfer_bytes(buffer).await?;
 
         // These two bytes are always sent. They are either a valid CRC, or
         // junk, depending on whether CRC mode was enabled.
         let mut crc_bytes = [0xFF; 2];
-        self.write_bytes(&mut crc_bytes).await?;
+        self.transfer_bytes(&mut crc_bytes).await?;
         if self.options.use_crc {
             let crc = u16::from_be_bytes(crc_bytes);
             let calc_crc = crc16(buffer);
@@ -485,6 +485,7 @@ where
         if self.options.use_crc && self.card_command(CMD59, 1).await? != R1_IDLE_STATE {
             return Err(Error::CantEnableCRC);
         }
+        debug!("Check card version..");
         // Check card version
         let mut delay = Delay::new_command();
         let arg = loop {
@@ -493,7 +494,7 @@ where
                 break 0;
             }
             let mut buffer = [0xFF; 4];
-            self.write_bytes(&mut buffer).await?;
+            self.transfer_bytes(&mut buffer).await?;
             let status = buffer[3];
             if status == 0xAA {
                 card_type = CardType::SD2;
@@ -516,7 +517,7 @@ where
                 return Err(Error::Cmd58Error);
             }
             let mut buffer = [0xFF; 4];
-            self.write_bytes(&mut buffer).await?;
+            self.transfer_bytes(&mut buffer).await?;
             if (buffer[0] & 0xC0) == 0xC0 {
                 card_type = CardType::SDHC;
             }
@@ -583,13 +584,7 @@ where
 
     /// Receive a byte from the SPI bus by clocking out an 0xFF byte.
     async fn read_byte(&mut self) -> Result<u8, Error> {
-        let mut read = [0xFF];
-        self.spi
-            .read(&mut read)
-            .await
-            .map_err(|_e| Error::Transport)?;
-
-        Ok(read[0])
+        self.transfer_byte(0xFF).await
     }
 
     /// Send a byte over the SPI bus and ignore what comes back.
@@ -598,17 +593,16 @@ where
     }
 
     /// Send one byte and receive one byte over the SPI bus.
-    /// Prefer to use write & read instead of this.
-    // #[deprecated]
-    // async fn transfer_byte(&mut self, out: u8) -> Result<u8, Error> {
-    //     let mut read = [0];
-    //     let write = [out];
-    //     self.spi
-    //         .transfer(&mut read, &write)
-    //         .await
-    //         .map(|_| read[0])
-    //         .map_err(|_e| Error::Transport)
-    // }
+    async fn transfer_byte(&mut self, out: u8) -> Result<u8, Error> {
+        let mut read = [0];
+        let write = [out];
+        self.spi
+            .transfer(&mut read, &write)
+            .await
+            .map_err(|_e| Error::Transport)?;
+
+        Ok(read[0])
+    }
 
     /// Send mutiple bytes and ignore what comes back over the SPI bus.
     async fn write_bytes(&mut self, out: &[u8]) -> Result<(), Error> {
@@ -617,17 +611,15 @@ where
     }
 
     /// Send multiple bytes and replace them with what comes back over the SPI bus.
-    /// Prefer to use write & read instead of this.
-    // #[deprecated]
-    // async fn transfer_bytes<const N: usize>(&mut self, in_out: &mut [u8; N]) -> Result<(), Error> {
-    //     let mut read = [0; N];
-    //     self.spi
-    //         .transfer(&mut read, in_out)
-    //         .await
-    //         .map_err(|_e| Error::Transport)?;
-    //     in_out.copy_from_slice(&read);
-    //     Ok(())
-    // }
+    async fn transfer_bytes<const N: usize>(&mut self, in_out: &mut [u8; N]) -> Result<(), Error> {
+        let mut read = [0; N];
+        self.spi
+            .transfer(&mut read, in_out)
+            .await
+            .map_err(|_e| Error::Transport)?;
+        in_out.copy_from_slice(&read);
+        Ok(())
+    }
 
     /// Spin until the card returns 0xFF, or we spin too many times and
     /// timeout.
