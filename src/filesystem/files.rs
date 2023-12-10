@@ -126,6 +126,11 @@ where
         f
     }
 
+    pub fn no_close(mut self) -> Self {
+        self.closed = true;
+        self
+    }
+
     /// Close the file
     /// This is REQUIRED to be called before dropping the file, otherwise the
     /// file will not be closed cleanly.
@@ -146,7 +151,7 @@ where
 {
     fn drop(&mut self) {
         if !self.closed {
-            panic!("File dropped without being closed");
+            defmt::error!("File dropped without being closed");
         }
     }
 }

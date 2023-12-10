@@ -88,6 +88,7 @@ pub struct Directory<
 {
     raw_directory: RawDirectory,
     volume_mgr: &'a mut VolumeManager<D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>,
+    closed: bool,
 }
 
 impl<'a, D, T, const MAX_DIRS: usize, const MAX_FILES: usize, const MAX_VOLUMES: usize>
@@ -104,6 +105,7 @@ where
         Directory {
             raw_directory,
             volume_mgr,
+            closed: false,
         }
     }
 
@@ -171,6 +173,10 @@ where
         core::mem::forget(self);
         d
     }
+
+    pub fn no_close(self) -> RawDirectory {
+        self.raw_directory
+    }
 }
 
 impl<'a, D, T, const MAX_DIRS: usize, const MAX_FILES: usize, const MAX_VOLUMES: usize> Drop
@@ -180,9 +186,12 @@ where
     T: crate::TimeSource,
 {
     fn drop(&mut self) {
-        self.volume_mgr
-            .close_dir(self.raw_directory)
-            .expect("Failed to close directory");
+        if self.closed {
+            return;
+        }
+        if let Err(e_) = self.volume_mgr.close_dir(self.raw_directory) {
+            defmt::error!("Unable to delete directory, might be ok.");
+        }
     }
 }
 
