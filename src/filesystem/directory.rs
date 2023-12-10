@@ -174,6 +174,9 @@ where
         d
     }
 
+    /// Allow the directory to be dropped without closing it.
+    /// This is useful if you want to close the directory yourself.
+    /// If you don't close it, you'll leak the directory.
     pub fn no_close(self) -> RawDirectory {
         self.raw_directory
     }

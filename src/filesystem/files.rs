@@ -126,6 +126,10 @@ where
         f
     }
 
+    /// Allow the file to be dropped without closing it.
+    /// This is UNSAFE, and should only be used if you know what you're doing.
+    /// If you drop the file without closing it, the file will stay open and
+    /// you might lose data.
     pub fn no_close(mut self) -> Self {
         self.closed = true;
         self
