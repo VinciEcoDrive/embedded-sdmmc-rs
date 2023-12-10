@@ -138,10 +138,9 @@ where
     /// Close the file
     /// This is REQUIRED to be called before dropping the file, otherwise the
     /// file will not be closed cleanly.
-    pub async fn close(mut self) -> Result<(), crate::Error<D::Error>> {
+    pub async fn close(self) -> Result<(), crate::Error<D::Error>> {
         self.volume_mgr.close_file(self.raw_file).await?;
-        self.closed = true;
-        drop(self);
+        core::mem::forget(self);
 
         Ok(())
     }
@@ -155,7 +154,9 @@ where
 {
     fn drop(&mut self) {
         if !self.closed {
+            #[cfg(feature = "defmt-log")]
             defmt::error!("File dropped without being closed");
+            let _ = self.volume_mgr.on_file_dropped(self.raw_file);
         }
     }
 }

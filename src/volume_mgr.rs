@@ -999,6 +999,13 @@ where
             .map_err(Error::DeviceError)?;
         Ok(())
     }
+
+    /// Wipe all open volumes, directories and files.
+    pub fn wipe(&mut self) {
+        self.open_volumes.clear();
+        self.open_dirs.clear();
+        self.open_files.clear();
+    }
 }
 
 /// Transform mode variants (ReadWriteCreate_Or_Append) to simple modes ReadWriteAppend or

@@ -194,6 +194,7 @@ where
             return;
         }
         if let Err(e_) = self.volume_mgr.close_dir(self.raw_directory) {
+            #[cfg(feature = "defmt-log")]
             defmt::error!("Unable to delete directory, might be ok.");
         }
     }
