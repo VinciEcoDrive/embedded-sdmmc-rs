@@ -50,6 +50,7 @@ pub trait BlockDevice {
     async fn write(&self, blocks: &[Block], start_block_idx: BlockIdx) -> Result<(), Self::Error>;
     /// Determine how many blocks this device can hold.
     async fn num_blocks(&self) -> Result<BlockCount, Self::Error>;
+    async fn reset(&self) -> Result<(), Self::Error>;
 }
 
 impl Block {

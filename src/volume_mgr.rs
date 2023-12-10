@@ -1001,10 +1001,13 @@ where
     }
 
     /// Wipe all open volumes, directories and files.
-    pub fn wipe(&mut self) {
+    /// Resets the block device.
+    pub async fn reset(&mut self) -> Result<(), Error<D::Error>> {
         self.open_volumes.clear();
         self.open_dirs.clear();
         self.open_files.clear();
+        self.block_device.reset().await?;
+        Ok(())
     }
 }
 

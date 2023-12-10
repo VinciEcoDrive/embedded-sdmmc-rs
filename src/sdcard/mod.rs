@@ -192,6 +192,12 @@ where
         inner.check_init().await?;
         inner.num_blocks().await
     }
+
+    /// Reset the card.
+    async fn reset(&self) -> Result<(), Self::Error> {
+        let mut inner = self.inner.borrow_mut();
+        inner.acquire().await
+    }
 }
 
 /// Represents an SD Card on an SPI bus.
